@@ -65,7 +65,7 @@ Send each command as its own message: pasting several at once sends them to Clau
 
 ## Cloud sessions
 
-A mod's panes draw in the terminal, the desktop app's Code tab and the VS Code extension, but not in a cloud session (Claude Code on the web): see [Where mods run](https://code.claude.com/docs/en/plugins/mods/overview.md#where-mods-run). There, if the plugin reaches the session, the tracker still fills itself in, and `/tracker` or `/tracker show` prints it as text.
+Tested only in the Claude desktop app (Code tab) and the terminal (Claude Code 2.1.309+). It hasn't been tested in the VS Code extension. Panes don't draw in a cloud session (Claude Code on the web): see [Where mods run](https://code.claude.com/docs/en/plugins/mods/overview.md#where-mods-run). There, if the plugin reaches the session, the tracker still fills itself in, and `/tracker` or `/tracker show` prints it as text.
 
 Getting the plugin into a cloud session:
 
