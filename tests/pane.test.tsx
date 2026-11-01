@@ -1044,6 +1044,29 @@ test('/tracker dismiss and /tracker restore set an item aside and bring it back'
   expect((await command.run($, 'dismiss a99')).text).toBe("There's no item a99 in the tracker.")
 })
 
+test('/tracker scan fills the tracker from earlier messages and answers with it, for where there is no pane', async ($, on) => {
+  const saved = new Map<string, unknown>()
+  const command = aCommand(on, saved, '{"actions":[{"text":"Draft the FAQ","owner":"Claude"}],"title":"FAQ launch"}')
+  on('session.messages', () => ({
+    value: [
+      { role: 'user', text: 'Can you draft the FAQ by Friday?', toolUses: [] },
+      { role: 'assistant', text: 'Yes, by Friday.', toolUses: [] },
+    ],
+  }))
+
+  const said = (await command.run($, 'scan')).text ?? ''
+  expect(said.split('\n').slice(0, 4)).toEqual([
+    'Scan done: added 1 item from earlier messages.',
+    '',
+    'FAQ launch',
+    'Goal: not clear yet',
+  ])
+  expect(said).toContain('☐ Draft the FAQ (owner: Claude) [a1]')
+  expect(command.prompts[0]).toContain('earlier stretch of the conversation')
+  // The pane's status line says the same.
+  expect(saved.get('note')).toBe('Scan done: added 1 item from earlier messages.')
+})
+
 test('the band stays out of the way while the pane is open', async ($, on) => {
   seat(on, new Map())
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })

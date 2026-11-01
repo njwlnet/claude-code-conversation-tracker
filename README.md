@@ -47,13 +47,14 @@ Needs Claude Code 2.1.309 or later. Conversations already open pick it up after 
 - **Your changes win.** Tick or untick any item. The **+** by a heading, or an item's **✎** (shown when you hover over it), puts a `/tracker` command in the message box for you to finish. What you edit stays as you set it. An item's **✕** moves it to a collapsed Dismissed group, where **Restore** brings it back.
 - **Replies.** Click a question's **?** to start a reply to it in the message box.
 - **Helper agents.** Each helper agent the conversation starts gets its own small tracker under **Helper agents**.
-- **Per conversation.** Each conversation's tracker is saved to its own file and comes back when you return to it. **Scan earlier messages** fills a tracker from a conversation that began before it was installed.
+- **Per conversation.** Each conversation's tracker is saved to its own file and comes back when you return to it. **Scan earlier messages** (or `/tracker scan`) fills a tracker from a conversation that began before it was installed.
 
 ## Commands
 
 ```
 /tracker                          show or hide the pane (prints the tracker where no pane can draw)
 /tracker show                     print the tracker as text, with each item's id
+/tracker scan                     fill it from earlier messages, then print it
 /tracker add action: <words>      also question:, decision:, sidequest:
 /tracker edit <id> <words>        ids show in /tracker show
 /tracker dismiss <id>             also restore <id>
@@ -65,7 +66,7 @@ Send each command as its own message: pasting several at once sends them to Clau
 
 ## Cloud sessions
 
-Tested only in the Claude desktop app (Code tab) and the terminal (Claude Code 2.1.309+). It hasn't been tested in the VS Code extension. Panes don't draw in a cloud session (Claude Code on the web): see [Where mods run](https://code.claude.com/docs/en/plugins/mods/overview.md#where-mods-run). There, if the plugin reaches the session, the tracker still fills itself in, and `/tracker` or `/tracker show` prints it as text.
+Tested only in the Claude desktop app (Code tab) and the terminal (Claude Code 2.1.309+). It hasn't been tested in the VS Code extension. Panes don't draw in a cloud session (Claude Code on the web): see [Where mods run](https://code.claude.com/docs/en/plugins/mods/overview.md#where-mods-run). There, if the plugin reaches the session, the tracker still fills itself in, `/tracker` or `/tracker show` prints it as text, and `/tracker scan` fills it from the conversation so far.
 
 Getting the plugin into a cloud session:
 
@@ -78,6 +79,7 @@ Getting the plugin into a cloud session:
   ```
 
 - On a Team or Enterprise plan, an owner can turn it on for everyone through server-managed settings.
+- In a cloud session that's already running (the setup script only runs for new ones), ask Claude to run the two commands above, then send `/reload-plugins`, then `/tracker scan`.
 
 A tracker saved in a cloud session lives on that cloud machine, so it can be lost when the machine is reclaimed. To keep the pane while working away from your desk, use [Remote Control](https://code.claude.com/docs/en/remote-control.md): the session runs on your own machine, where the pane draws.
 

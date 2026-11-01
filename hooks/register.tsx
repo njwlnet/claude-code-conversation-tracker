@@ -296,7 +296,7 @@ const SECTION: Record<Kind, string> = {
   sidequest: 'Sidequests',
 }
 const USAGE =
-  'Use /tracker to show or hide the tracker, /tracker show to print it, /tracker add action: <item> (or question:, decision:, sidequest:), /tracker edit <id> <words>, /tracker dismiss <id> or restore <id>, or /tracker title <words> and /tracker goal <words>. Type each on its own.'
+  'Use /tracker to show or hide the tracker, /tracker show to print it, /tracker scan to fill it from earlier messages, /tracker add action: <item> (or question:, decision:, sidequest:), /tracker edit <id> <words>, /tracker dismiss <id> or restore <id>, or /tracker title <words> and /tracker goal <words>. Type each on its own.'
 
 // Reads what the person typed into an item's fields (owner, due date, reason)
 // with the same model as the updater; the words as typed if that fails.
@@ -371,9 +371,17 @@ async function runUpdater($: EngineInterface, exchange: string): Promise<void> {
 // watching. Nothing is added twice, so a scan can run again safely.
 const SCAN_SIZE = 40_000
 
-async function runScan($: EngineInterface): Promise<void> {
+// What a scan comes to, said on the status line and as /tracker scan's reply.
+async function runScan($: EngineInterface): Promise<string> {
+  const said = await scanned($)
+  await flashStatus($, said, 20_000)
+
+  return said
+}
+
+async function scanned($: EngineInterface): Promise<string> {
   const messages = await $.session.messages()
-  if ('deny' in messages) return
+  if ('deny' in messages) return "The scan couldn't read this conversation's messages."
   const stretches = earlierStretches(messages, SCAN_SIZE)
   const count = (t: Tracker) => t.actions.length + t.questions.length + t.decisions.length + (t.sidequests ?? []).length
   let added = 0
@@ -390,9 +398,8 @@ async function runScan($: EngineInterface): Promise<void> {
     })
     if (!reply.isAnswered) {
       const why = reply.reason === 'api-error' ? reply.error : reply.reason
-      await flashStatus($, `The scan stopped at ${at + 1} of ${stretches.length} (${why}). Run it again to finish.`, 20_000)
 
-      return
+      return `The scan stopped at ${at + 1} of ${stretches.length} (${why}). Run it again to finish.`
     }
     const changes = parseChanges(reply.text)
     if (changes === undefined) continue
@@ -407,11 +414,9 @@ async function runScan($: EngineInterface): Promise<void> {
     })
     added += gained
   }
-  await flashStatus(
-    $,
-    added === 0 ? 'Scan done: nothing new in earlier messages.' : `Scan done: added ${added} ${added === 1 ? 'item' : 'items'} from earlier messages.`,
-    15_000,
-  )
+  return added === 0
+    ? 'Scan done: nothing new in earlier messages.'
+    : `Scan done: added ${added} ${added === 1 ? 'item' : 'items'} from earlier messages.`
 }
 
 // After each turn of a helper agent this conversation started: the same
@@ -574,6 +579,21 @@ export const register: Register = on => {
       return { text: `Updated ${SECTION[found.kind].toLowerCase()}: ${editLine(found.kind, entry)}` }
     }
     if (/^show$/i.test(typed)) return { text: asText(await read($, tracker)) }
+    if (/^scan$/i.test(typed)) {
+      // Behind any update under way; the reply waits for the scan to finish.
+      let said = ''
+      const run = queue.then(async () => {
+        said = await runScan($)
+      })
+      queue = run.catch(() => undefined)
+      try {
+        await run
+      } catch (error) {
+        return { text: `The scan failed (${(error instanceof Error ? error.message : String(error)).slice(0, 80)}).` }
+      }
+
+      return { text: `${said}\n\n${asText(await read($, tracker))}` }
+    }
     if (typed !== '') return { text: USAGE }
 
     const pane = (await $.ui.panes()).find(one => one.id === PANE)
@@ -912,7 +932,9 @@ export const register: Register = on => {
             dimColor
             onPress={() => {
               queue = queue
-                .then(() => runScan($))
+                .then(async () => {
+                  await runScan($)
+                })
                 .catch(async (error: unknown) => {
                   const why = (error instanceof Error ? error.message : String(error)).slice(0, 80)
                   await flashStatus($, `The scan failed (${why}).`, 15_000)
