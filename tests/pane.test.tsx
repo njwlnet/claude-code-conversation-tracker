@@ -5,7 +5,6 @@ import type { Engine } from 'claude-code/testing'
 import type { Tracker } from '../types'
 import { add, dismiss, edit, restore } from '../hooks/edits'
 import { editLine, parseEntry } from '../hooks/entry'
-import { findContext } from '../hooks/quotes'
 import { decode, encode } from '../hooks/saved'
 import { applyChanges, buildPrompt, earlierStretches, parseChanges } from '../hooks/updater'
 
@@ -452,147 +451,6 @@ test('Cancel drops a waiting reply', async ($, on) => {
   await band.unmount()
 })
 
-test("new items keep where they came from; a row's ▸ opens it to the line in context where the app can't scroll", async ($, on) => {
-  const saved = new Map<string, unknown>()
-  const turn = aTurn(
-    on,
-    saved,
-    '{"actions":[{"text":"Send the revised proposal","from":"person","quote":"Can you send the revised proposal to the client by Friday?"}],' +
-      '"questions":[{"text":"What is the launch date?","from":"claude","quote":"What is the launch date?"}],' +
-      '"decisions":[{"text":"Monthly billing only"}]}',
-  )
-  // Each row opened, in order.
-  const opened: unknown[] = []
-  watchers.get(saved)?.push((key, value) => {
-    if (key === 'expanded' && value !== null) opened.push(value)
-  })
-
-  // The exchange's rows, as the main conversation keeps them.
-  const row = (door: 'prompt' | 'response', type: 'user' | 'assistant', text: string, uuid: string) =>
-    $.session.append({
-      message: { type, role: type, content: [{ type: 'text', text }] },
-      door,
-      origin: door === 'prompt' ? { kind: 'composer' } : { kind: 'model', model: 'claude' },
-      uuid,
-    })
-  await row('prompt', 'user', 'Can you send the revised proposal to the client by Friday?', 'row-prompt')
-  await row('response', 'assistant', ANSWER, 'row-answer')
-  const rows = saved.get('rows') as { prompt?: string; answer?: string }
-  expect(rows.prompt).toBeDefined()
-  expect(rows.answer).toBeDefined()
-  expect(rows.answer).not.toBe(rows.prompt)
-
-  await turn.end($)
-  const t = trackerIn(saved)
-  expect(t.actions[0]).toMatchObject({ source: rows.prompt, quote: { by: 'person' } })
-  expect(t.questions[0]).toMatchObject({ source: rows.answer, quote: { by: 'claude', text: 'What is the launch date?' } })
-  expect(t.decisions[0]?.source).toBe(rows.prompt)
-  expect(t.decisions[0]?.quote).toBeUndefined()
-
-  for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
-    saved.set('tracker', stored({ ...t, actions: t.actions.map(item => ({ ...item, status: 'done' as const, doneOn: '2026-10-31' })) }))
-    const ui = await $.ui.mount({ ...PANE, surface })
-    // The text stays plain, struck once done; each row has a ▸ kept for hover.
-    expect((await ui.find({ type: 'Text', text: /^Send the revised proposal/ }))?.text).toBe('Send the revised proposal (done Oct 31)')
-    expect(runs(await ui.find({ type: 'Text', text: /^Send the revised proposal/ }))[0]?.props.strikethrough).toBe(true)
-    expect((await ui.find({ key: 'go:a1' }))?.text).toBe('▸')
-    // The kit draws no conversation to scroll, as the desktop app won't.
-    await ui.press({ key: 'go:a1' })
-    await ui.press({ key: 'go:q1' })
-    await ui.press({ key: 'go:d1' })
-    await ui.unmount()
-  }
-  expect(opened.slice(0, 3)).toEqual([
-    {
-      id: 'a1',
-      context: {
-        by: 'person',
-        before: "Let's launch with monthly billing only, it's simpler to support.",
-        text: 'Can you send the revised proposal to the client by Friday?',
-      },
-    },
-    { id: 'q1', context: { by: 'claude', before: 'I will send the proposal by Friday.', text: 'What is the launch date?' } },
-    // The decision had no line saved: the closest is found, and kept.
-    {
-      id: 'd1',
-      context: {
-        by: 'person',
-        text: "Let's launch with monthly billing only, it's simpler to support.",
-        after: 'Can you send the revised proposal to the client by Friday?',
-      },
-    },
-  ])
-  expect(trackerIn(saved).decisions[0]?.quote).toEqual({
-    by: 'person',
-    text: "Let's launch with monthly billing only, it's simpler to support.",
-  })
-})
-
-test('the open row shows the line between its dim neighbours, and ▾ closes it', async ($, on) => {
-  const saved = new Map<string, unknown>([
-    ['tracker', stored(SAMPLE)],
-    ['expanded', { id: 'a1', context: { by: 'person', before: 'Before it.', text: 'The line.', after: 'After it.' } }],
-  ])
-  seat(on, saved)
-
-  for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
-    const ui = await $.ui.mount({ ...PANE, surface })
-    expect((await ui.find({ type: 'Text', text: /^You:/ }))?.text).toBe('You: Before it. The line. After it.')
-    // Not bold, which read as confusing; its dim neighbours set it apart, and the
-    // whole quote is smaller and in italics.
-    const quote = await ui.find({ type: 'Text', text: /^You:/ })
-    expect(quote?.props).toMatchObject({ italic: true, size: 'footnote' })
-    // Its styled runs are the dim lead and neighbours; the line itself is plain.
-    expect(runs(quote).map(run => run.props)).toEqual([{ dimColor: true }, { dimColor: true }, { dimColor: true }])
-    expect(JSON.stringify(runs(quote))).not.toContain('The line.')
-    expect((await ui.find({ key: 'go:a1' }))?.text).toBe('▾')
-    expect((await ui.find({ key: 'go:a2' }))?.text).toBe('▸')
-    await ui.unmount()
-  }
-
-  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  await ui.press({ key: 'go:a1' })
-  expect(saved.get('expanded')).toBe(null)
-  await ui.unmount()
-
-  saved.set('expanded', { id: 'd2' })
-  const missing = await $.ui.mount({ ...PANE, surface: 'desktop' })
-  expect(await missing.find({ type: 'Text', text: "Couldn't find where this came up in the conversation." })).toBeDefined()
-  await missing.unmount()
-})
-
-test('the line an item came from is found with its neighbours', () => {
-  const said = (role: 'user' | 'assistant', text: string, toolResults?: []) => ({ role, text, toolUses: [], toolResults })
-  const messages = [
-    said('assistant', 'Try sending: "Can you draft the FAQ by Friday?"'),
-    said('user', '<system-reminder>draft the FAQ by Friday</system-reminder>'),
-    said('user', 'Weekly billing it is. Can you draft the FAQ by Friday? Thanks.'),
-    said('user', '', []),
-    said('assistant', 'I drafted the FAQ.'),
-  ]
-
-  // With no line saved: the person's words beat Claude's earlier suggestion of
-  // them, a tag-led reminder doesn't count, and the sentences either side come too.
-  expect(findContext(messages, 'Draft the FAQ by Friday')).toEqual({
-    by: 'person',
-    before: 'Weekly billing it is.',
-    text: 'Can you draft the FAQ by Friday?',
-    after: 'Thanks.',
-  })
-  expect(findContext(messages, 'Weekly billing')).toEqual({
-    by: 'person',
-    text: 'Weekly billing it is.',
-    after: 'Can you draft the FAQ by Friday?',
-  })
-  // A saved line is found where its speaker said it.
-  expect(findContext(messages, 'Draft the FAQ', { by: 'claude', text: 'I drafted the FAQ.' })).toEqual({
-    by: 'claude',
-    text: 'I drafted the FAQ.',
-  })
-  // Fewer than half the words in any one sentence: nothing is claimed.
-  expect(findContext(messages, 'Book the venue for the offsite party')).toBeUndefined()
-})
-
 test('an unticked item is ticked again when the conversation says so; a locked one keeps its details', () => {
   const t: Tracker = {
     actions: [
@@ -673,7 +531,7 @@ test('the updater adds at most one sidequest a reply, none repeating an action i
     JSON.stringify({
       sidequests: [
         { text: 'send revised proposal to client', why: 'repeats an action item' },
-        { text: 'Set up a status page', why: 'helps support during launch', from: 'claude', quote: 'Launch is close.' },
+        { text: 'Set up a status page', why: 'helps support during launch' },
         { text: 'Write a launch checklist' },
       ],
     }),
@@ -688,15 +546,7 @@ test('the updater adds at most one sidequest a reply, none repeating an action i
   const fresh = parseChanges(JSON.stringify({ sidequests: changes.sidequests.slice(1) }))
   if (fresh === undefined) return
   const added = applyChanges(SAMPLE, fresh, '2026-10-31')
-  expect(added.sidequests).toEqual([
-    {
-      id: 's1',
-      text: 'Set up a status page',
-      why: 'helps support during launch',
-      status: 'open',
-      quote: { by: 'claude', text: 'Launch is close.' },
-    },
-  ])
+  expect(added.sidequests).toEqual([{ id: 's1', text: 'Set up a status page', why: 'helps support during launch', status: 'open' }])
   expect(buildPrompt(added, '<person>hi</person>', new Date(2026, 9, 31, 12).getTime())).toContain(
     '- sidequest s1 [open] Set up a status page',
   )
@@ -776,11 +626,8 @@ test('/tracker edit rewrites an item exactly as typed, clearing what was left ou
   expect((await command.run($, 'fly')).text).toMatch(/^Use \/tracker/)
 })
 
-test('+ by a heading and Edit in an open row start the command in the message box', async ($, on) => {
-  const saved = new Map<string, unknown>([
-    ['tracker', stored(SAMPLE)],
-    ['expanded', { id: 'a1' }],
-  ])
+test("+ by a heading and an item's ✎ start the command in the message box", async ($, on) => {
+  const saved = new Map<string, unknown>([['tracker', stored(SAMPLE)]])
   seat(on, saved)
   const fills = messageBox(on, '', true)
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
@@ -794,17 +641,16 @@ test('+ by a heading and Edit in an open row start the command in the message bo
   await ui.unmount()
 })
 
-test('Dismiss moves an item to a collapsed Dismissed group, where Restore brings it back', async ($, on) => {
-  const saved = new Map<string, unknown>([
-    ['tracker', stored(SAMPLE)],
-    ['expanded', { id: 'q2' }],
-  ])
+test("an item's ✕ moves it to a collapsed Dismissed group, where Restore brings it back", async ($, on) => {
+  const saved = new Map<string, unknown>([['tracker', stored(SAMPLE)]])
   seat(on, saved)
 
   const first = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  // Each row's ✎ and ✕ are drawn hidden, shown while the pointer is over it.
+  expect((await first.find({ key: 'edit:q2' }))?.text).toBe('✎')
+  expect((await first.find({ key: 'dismiss:q2' }))?.text).toBe('✕')
   await first.press({ key: 'dismiss:q2' })
   expect(trackerIn(saved).questions[1]?.dismissed).toBe(true)
-  expect(saved.get('expanded')).toBe(null)
   await first.unmount()
 
   const after = await $.ui.mount({ ...PANE, surface: 'desktop' })
@@ -1185,6 +1031,17 @@ test('where no pane can draw (a cloud session), /tracker answers with the tracke
   expect(said).toContain('Oct 29: Launch with monthly billing only (simpler to support) [d1]')
   // /tracker show prints it anywhere.
   expect((await command.run($, 'show')).text).toBe(said)
+})
+
+test('/tracker dismiss and /tracker restore set an item aside and bring it back', async ($, on) => {
+  const saved = new Map<string, unknown>([['tracker', stored(SAMPLE)]])
+  const command = aCommand(on, saved, '{}')
+
+  expect((await command.run($, 'dismiss q2')).text).toBe('Dismissed: Does the free tier need a seat limit?')
+  expect(trackerIn(saved).questions[1]?.dismissed).toBe(true)
+  expect((await command.run($, 'restore q2')).text).toBe('Restored: Does the free tier need a seat limit?')
+  expect(trackerIn(saved).questions[1]).toEqual(SAMPLE.questions[1])
+  expect((await command.run($, 'dismiss a99')).text).toBe("There's no item a99 in the tracker.")
 })
 
 test('the band stays out of the way while the pane is open', async ($, on) => {

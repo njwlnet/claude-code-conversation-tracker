@@ -44,8 +44,7 @@ Needs Claude Code 2.1.309 or later. Conversations already open pick it up after 
 
 - **Fills itself in.** After each of Claude's replies, the latest exchange and the current tracker go to Claude Sonnet, which reports what to add: action items (with owners and due dates when they're mentioned, relative dates turned into real ones), open questions, decisions with their reason, and, rarely, a sidequest (a helpful adjacent to-do nobody asked for). Nothing is ever deleted or rewritten by it.
 - **Ticks things off.** When the conversation shows an item is done, it's crossed out with the date and a few words on who did it. A question that gets answered shows the answer.
-- **Your changes win.** Tick or untick any item. The **+** by a heading, or **Edit** under an item, puts a `/tracker` command in the message box for you to finish. What you edit stays as you set it. **Dismiss** moves a wrong item to a collapsed Dismissed group, where **Restore** brings it back.
-- **Where it came from.** Hover an item and click **▸** to open the sentence it came from, with the sentences either side. (In a terminal in fullscreen it scrolls the conversation there instead.)
+- **Your changes win.** Tick or untick any item. The **+** by a heading, or an item's **✎** (shown when you hover over it), puts a `/tracker` command in the message box for you to finish. What you edit stays as you set it. An item's **✕** moves it to a collapsed Dismissed group, where **Restore** brings it back.
 - **Replies.** Click a question's **?** to start a reply to it in the message box.
 - **Helper agents.** Each helper agent the conversation starts gets its own small tracker under **Helper agents**.
 - **Per conversation.** Each conversation's tracker is saved to its own file and comes back when you return to it. **Scan earlier messages** fills a tracker from a conversation that began before it was installed.
@@ -56,10 +55,13 @@ Needs Claude Code 2.1.309 or later. Conversations already open pick it up after 
 /tracker                          show or hide the pane (prints the tracker where no pane can draw)
 /tracker show                     print the tracker as text, with each item's id
 /tracker add action: <words>      also question:, decision:, sidequest:
-/tracker edit <id> <words>        the id shows in the item's Edit line
+/tracker edit <id> <words>        ids show in /tracker show
+/tracker dismiss <id>             also restore <id>
 /tracker title <words>
 /tracker goal <words>
 ```
+
+Send each command as its own message: pasting several at once sends them to Claude as text.
 
 ## Cloud sessions
 

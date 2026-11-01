@@ -1,4 +1,4 @@
-import type { ActionItem, Decision, Entry, Kind, Question, Quote, Sidequest, Tracker } from '../types'
+import type { ActionItem, Decision, Entry, Kind, Question, Sidequest, Tracker } from '../types'
 import { nextId } from './updater'
 
 // The person's click on an action item's checkbox: a finished item opens
@@ -17,19 +17,6 @@ export function toggle(t: Tracker, id: string, today: string): Tracker {
     ...t,
     actions: t.actions.map(flip),
     ...(t.sidequests === undefined ? {} : { sidequests: t.sidequests.map(flip) }),
-  }
-}
-
-// Saves the line an item came from, found after the fact.
-export function withQuote(t: Tracker, id: string, quote: Quote): Tracker {
-  const stamp = <T extends { id: string; quote?: Quote }>(item: T): T => (item.id === id ? { ...item, quote } : item)
-
-  return {
-    ...t,
-    actions: t.actions.map(stamp),
-    questions: t.questions.map(stamp),
-    decisions: t.decisions.map(stamp),
-    ...(t.sidequests === undefined ? {} : { sidequests: t.sidequests.map(stamp) }),
   }
 }
 

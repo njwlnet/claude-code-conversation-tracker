@@ -1,14 +1,8 @@
 // Dates are ISO calendar days (YYYY-MM-DD); the pane shows them as "Nov 7".
-// `source` is the id of the conversation row an item came from, for the pane
-// to scroll back to, and `quote` the line it came from, for where it can't;
-// both absent on items made before they were kept.
-export type Quote = { by: 'person' | 'claude'; text: string }
 
 export type ActionItem = {
   id: string
   text: string
-  source?: string
-  quote?: Quote
   // Set when the person dismisses it: kept, shown only under Dismissed.
   dismissed?: true
   owner?: string
@@ -25,8 +19,6 @@ export type ActionItem = {
 export type Question = {
   id: string
   text: string
-  source?: string
-  quote?: Quote
   dismissed?: true
   status: 'open' | 'resolved'
   answer?: string
@@ -37,8 +29,6 @@ export type Question = {
 export type Decision = {
   id: string
   text: string
-  source?: string
-  quote?: Quote
   dismissed?: true
   reason?: string
   decidedOn: string
@@ -50,8 +40,6 @@ export type Sidequest = {
   id: string
   text: string
   why?: string
-  source?: string
-  quote?: Quote
   dismissed?: true
   status: 'open' | 'done'
   doneOn?: string
@@ -63,13 +51,6 @@ export type Sidequest = {
 export type Kind = 'action' | 'question' | 'decision' | 'sidequest'
 export type Entry = { text: string; owner?: string; due?: string; reason?: string; why?: string }
 
-// The row opened under its », accordion-style: where the item came from, the
-// line with the sentences either side of it; no `context` when none was found.
-export type Expanded = { id: string; context?: Quote & { before?: string; after?: string } }
-
-// The rows of the exchange under way: the person's prompt, and Claude's
-// latest reply with text in it.
-export type Rows = { prompt?: string; answer?: string }
 
 export type Tracker = {
   // What the conversation is about, and what the person wants from it: filled
@@ -90,6 +71,6 @@ export type Side = { agent: string; title: string; tracker: Tracker }
 
 declare module 'claude-code' {
   interface PluginState {
-    'conversation-tracker': { tracker: Shaped<Tracker>; isClosed: boolean; note: string | null; replyingTo: string | null; rows: Rows; expanded: Expanded | null; showDismissed: boolean; loadedFor: string | null; openSides: string[]; hiddenDone: Kind[] }
+    'conversation-tracker': { tracker: Shaped<Tracker>; isClosed: boolean; note: string | null; replyingTo: string | null; showDismissed: boolean; loadedFor: string | null; openSides: string[]; hiddenDone: Kind[] }
   }
 }

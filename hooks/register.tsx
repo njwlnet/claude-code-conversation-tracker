@@ -1,10 +1,9 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderChildren, Timer } from 'claude-code'
 
-import type { ActionItem, Decision, Entry, Expanded, Kind, Question, Quote, Rows, Side, Sidequest, Tracker } from '../types'
-import { add, dismiss, edit, find, frame, onSide, restore, toggle, toggleSide, withQuote } from './edits'
+import type { ActionItem, Decision, Entry, Kind, Question, Side, Sidequest, Tracker } from '../types'
+import { add, dismiss, edit, find, frame, onSide, restore, toggle, toggleSide } from './edits'
 import { editLine, ENTRY_SYSTEM, entryPrompt, parseEntry } from './entry'
-import { findContext } from './quotes'
 import { decode, encode, savedPath } from './saved'
 import { applyChanges, buildPrompt, earlierStretches, isoDay, latestExchange, parseChanges, SYSTEM } from './updater'
 
@@ -28,12 +27,6 @@ const isClosed = atom({ plugin: 'conversation-tracker', key: 'isClosed' } as con
 // The question the person's next message replies to, where the message box
 // couldn't take the reply itself: drawn above the box, added when they send.
 const replyingTo = atom({ plugin: 'conversation-tracker', key: 'replyingTo' } as const, null)
-
-// The rows of the exchange under way, for new items to point back to.
-const rows = atom({ plugin: 'conversation-tracker', key: 'rows' } as const, {})
-
-// The row whose ▸ is open, if any: one at a time, as an accordion.
-const expanded = atom({ plugin: 'conversation-tracker', key: 'expanded' } as const, null)
 
 // The conversation whose saved tracker this session's state holds: the id
 // it was loaded for, or null before any was.
@@ -229,10 +222,8 @@ async function load($: EngineInterface): Promise<void> {
     await update($, tracker, () => EMPTY)
     await update($, isClosed, () => false)
   }
-  await update($, expanded, () => null)
   await update($, replyingTo, () => null)
   await update($, note, () => null)
-  await update($, rows, () => ({}))
   await update($, showDismissed, () => false)
   await update($, loadedFor, () => conversation)
   if (saved === undefined) await persist($)
@@ -293,43 +284,11 @@ async function flashStatus($: EngineInterface, text: string, ms: number): Promis
   })
 }
 
-// The ▸ on a row: scrolls the conversation to the row the item came from.
-// Where the app can't scroll there (the desktop app can't), the row opens
-// instead, accordion-style, to the line it came from, between the dim
-// sentences either side of it; ▾ closes it. An item with no line saved (one
-// made before lines were kept) gets the conversation's closest sentence,
-// saved for next time.
-type Origin = { id: string; text: string; source?: string; quote?: Quote }
-
-async function goTo($: EngineInterface, item: Origin): Promise<void> {
-  if ((await read($, expanded))?.id === item.id) {
-    await update($, expanded, () => null)
-
-    return
-  }
-  if (item.source !== undefined) {
-    try {
-      if ((await $.ui.scroll({ to: { requestId: item.source }, block: 'start' })).deny === undefined) return
-    } catch {
-      // Shown below as the quote.
-    }
-  }
-  const messages = await $.session.messages()
-  const context = 'deny' in messages ? undefined : findContext(messages, item.text, item.quote)
-
-  if (context !== undefined && item.quote === undefined) {
-    const found: Quote = { by: context.by, text: context.text }
-    await changeTracker($, now => withQuote(now ?? EMPTY, item.id, found))
-  }
-  // State takes JSON data: no field is left undefined.
-  const open: Expanded = context === undefined ? { id: item.id } : { id: item.id, context }
-  await update($, expanded, () => open)
-}
-
 // The person's own changes, typed in the message box as a /tracker command.
 const ADD = /^add\s+(?:(action|question|decision|sidequest)s?\s*:\s*)?([\s\S]*)$/i
 const EDIT = /^edit\s+([aqds]\d+)\s*([\s\S]*)$/i
 const FRAME = /^(title|goal)\b\s*([\s\S]*)$/i
+const SET_ASIDE = /^(dismiss|restore)\s+([aqds]\d+)\s*$/i
 const SECTION: Record<Kind, string> = {
   action: 'Action items',
   question: 'Open questions',
@@ -337,7 +296,7 @@ const SECTION: Record<Kind, string> = {
   sidequest: 'Sidequests',
 }
 const USAGE =
-  'Use /tracker to show or hide the tracker, /tracker show to print it, /tracker add action: <item> (or question:, decision:, sidequest:), /tracker edit <id> <words>, or /tracker title <words> and /tracker goal <words>.'
+  'Use /tracker to show or hide the tracker, /tracker show to print it, /tracker add action: <item> (or question:, decision:, sidequest:), /tracker edit <id> <words>, /tracker dismiss <id> or restore <id>, or /tracker title <words> and /tracker goal <words>. Type each on its own.'
 
 // Reads what the person typed into an item's fields (owner, due date, reason)
 // with the same model as the updater; the words as typed if that fails.
@@ -368,7 +327,7 @@ async function startCommand($: EngineInterface, command: string): Promise<void> 
 
 // After each of Claude's replies: ask the model what the tracker should gain
 // from that exchange, then merge it into the tracker as it stands by then.
-async function runUpdater($: EngineInterface, exchange: string, from: Rows): Promise<void> {
+async function runUpdater($: EngineInterface, exchange: string): Promise<void> {
   await update($, note, () => 'Updating…')
   const now = await $.clock.now()
   const reply = await $.model.complete({
@@ -395,7 +354,7 @@ async function runUpdater($: EngineInterface, exchange: string, from: Rows): Pro
   let ticked: string[] = []
   await changeTracker($, t => {
     const before = t ?? EMPTY
-    const after = applyChanges(before, changes, isoDay(now), from)
+    const after = applyChanges(before, changes, isoDay(now))
     ticked = newlyFinished(before, after)
 
     return after
@@ -505,31 +464,14 @@ export const register: Register = on => {
     return question === undefined ? next(e) : next({ ...e, text: replyPrefix(question) + e.text.replace(REPLY, '') })
   })
 
-  // Notes the rows of the exchange under way as the main conversation keeps
-  // them: a new prompt starts an exchange; each reply with text moves on.
-  on('session.append', async ($, e, next) => {
-    const kept = await next(e)
-
-    if (e.agentId === undefined && e.message.isMeta !== true) {
-      if (e.door === 'prompt') {
-        await update($, rows, () => ({ prompt: e.uuid }))
-      } else if (e.door === 'response' && e.message.content.some(block => block.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '')) {
-        await update($, rows, now => ({ ...now, answer: e.uuid }))
-      }
-    }
-
-    return kept
-  })
-
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined && e.reason === 'answer') {
       const messages = await $.session.messages()
       const exchange = 'deny' in messages ? undefined : latestExchange(messages, e.answer)
-      const from = await read($, rows)
 
       if (exchange !== undefined) {
         queue = queue
-          .then(() => runUpdater($, exchange, from))
+          .then(() => runUpdater($, exchange))
           .catch(async (error: unknown) => {
             const why = (error instanceof Error ? error.message : String(error)).slice(0, 80)
             await update($, note, () => `Couldn't update (${why}). It will try again after the next reply.`)
@@ -584,6 +526,17 @@ export const register: Register = on => {
     const adding = typed.match(ADD)
     const editing = typed.match(EDIT)
     const framing = typed.match(FRAME)
+    const settingAside = typed.match(SET_ASIDE)
+
+    if (settingAside !== null) {
+      const verb = settingAside[1]?.toLowerCase()
+      const id = settingAside[2] ?? ''
+      const found = find(await read($, tracker), id)
+      if (found === undefined) return { text: `There's no item ${id} in the tracker.` }
+      await changeTracker($, now => (verb === 'dismiss' ? dismiss : restore)(now ?? EMPTY, id))
+
+      return { text: `${verb === 'dismiss' ? 'Dismissed' : 'Restored'}: ${found.item.text}` }
+    }
 
     if (framing !== null) {
       const field = (framing[1]?.toLowerCase() ?? 'title') as 'title' | 'goal'
@@ -673,7 +626,6 @@ export const register: Register = on => {
     const { Box, Button, Text } = $.ui.resolve(e)
     const t = await read($, tracker)
     const status = await read($, note)
-    const open = await read($, expanded)
 
     // Each action item's checkbox: a click ticks or unticks it.
     const checkbox = (id: string, glyph: string, isFinished: boolean) => (
@@ -700,77 +652,35 @@ export const register: Register = on => {
       </Text>
     )
 
-    // A row's ▸ sits just after its words, in a gutter kept for it so nothing
-    // shifts when it shows while the pointer is over the row. On the open
-    // row it stays, as ▾, to close it.
-    const goButton = (item: Origin) =>
-      open?.id === item.id ? (
-        <Box width={2} flexShrink={0}>
-          <Button key={`go:${item.id}`} label="▾" plain dimColor onPress={() => goTo($, item)} />
+    // What the person can do with an item, shown while the pointer is over its
+    // row: ✎ puts its /tracker edit in the message box, ✕ dismisses it. A
+    // gutter is kept for them so nothing shifts when they show.
+    const tools = (item: { id: string; text: string }, kind: Kind) => (
+      <Box width={4} flexShrink={0}>
+        <Box display="none" hover={{ display: 'flex' }} flexDirection="row" gap={1}>
+          <Button
+            key={`edit:${item.id}`}
+            label="✎"
+            plain
+            dimColor
+            onPress={() => startCommand($, `/tracker edit ${item.id} ${editLine(kind, item)}`)}
+          />
+          <Button
+            key={`dismiss:${item.id}`}
+            label="✕"
+            plain
+            dimColor
+            onPress={() => changeTracker($, now => dismiss(now ?? EMPTY, item.id))}
+          />
         </Box>
-      ) : (
-        <Box width={2} flexShrink={0}>
-          <Box display="none" hover={{ display: 'flex' }}>
-            <Button key={`go:${item.id}`} label="▸" plain dimColor onPress={() => goTo($, item)} />
-          </Box>
-        </Box>
-      )
+      </Box>
+    )
 
-    // Under the open row: the line its item came from, with the sentences
-    // either side of it dim; smaller (where the surface has sizes) and in
-    // italics, so it reads as a quote, not an item. Then what the person can
-    // do with the item: Edit puts it in the message box, Dismiss moves it to
-    // Dismissed.
-    const details = (item: Origin, kind: Kind) => {
-      if (open?.id !== item.id) return null
-      const context = open.context
-
-      return (
-        <Box flexDirection="column" marginLeft={2} marginBottom={1}>
-          {context === undefined ? (
-            <Text dimColor italic size="footnote">
-              Couldn't find where this came up in the conversation.
-            </Text>
-          ) : (
-            <Text italic size="footnote">
-              <Text dimColor>{context.by === 'claude' ? 'Claude:' : 'You:'} </Text>
-              {context.before === undefined ? null : <Text dimColor>{context.before} </Text>}
-              <Text>{context.text}</Text>
-              {context.after === undefined ? null : <Text dimColor> {context.after}</Text>}
-            </Text>
-          )}
-          <Box flexDirection="row" gap={2}>
-            <Button
-              key={`edit:${item.id}`}
-              label="Edit"
-              plain
-              dimColor
-              onPress={() => startCommand($, `/tracker edit ${item.id} ${editLine(kind, item)}`)}
-            />
-            <Button
-              key={`dismiss:${item.id}`}
-              label="Dismiss"
-              plain
-              dimColor
-              onPress={async () => {
-                await changeTracker($, now => dismiss(now ?? EMPTY, item.id))
-                await update($, expanded, () => null)
-              }}
-            />
-          </Box>
-        </Box>
-      )
-    }
-
-    // An item's line, keyed so the pointer over it reveals its ▸, and the
-    // details under it while it's open.
-    const row = (item: Origin, kind: Kind, line: RenderChildren[]) => (
-      <Box flexDirection="column">
-        <Box key={`row:${item.id}`} flexDirection="row" gap={1}>
-          {line}
-          {goButton(item)}
-        </Box>
-        {details(item, kind)}
+    // An item's line, keyed so the pointer over it reveals its tools.
+    const row = (item: { id: string; text: string }, kind: Kind, line: RenderChildren[]) => (
+      <Box key={`row:${item.id}`} flexDirection="row" gap={1}>
+        {line}
+        {tools(item, kind)}
       </Box>
     )
 

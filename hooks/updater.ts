@@ -1,18 +1,14 @@
 import type { SessionMessage } from 'claude-code'
 
-import type { ActionItem, Decision, Question, Quote, Rows, Sidequest, Tracker } from '../types'
+import type { ActionItem, Decision, Question, Sidequest, Tracker } from '../types'
 
 // What the updater may ask for after one exchange. The model only proposes;
 // applyChanges decides what lands.
-type From = 'person' | 'claude'
-
-type Origin = { from?: From; quote?: string }
-
 export type Changes = {
-  actions: ({ text: string; owner?: string; due?: string } & Origin)[]
-  questions: ({ text: string } & Origin)[]
-  decisions: ({ text: string; reason?: string } & Origin)[]
-  sidequests: ({ text: string; why?: string } & Origin)[]
+  actions: { text: string; owner?: string; due?: string }[]
+  questions: { text: string }[]
+  decisions: { text: string; reason?: string }[]
+  sidequests: { text: string; why?: string }[]
   updates: { id: string; owner?: string; due?: string }[]
   done: { id: string; how?: string }[]
   resolved: { id: string; answer: string }[]
@@ -22,7 +18,6 @@ export type Changes = {
 
 const MAX_TEXT = 120
 const MAX_NOTE = 60
-const MAX_QUOTE = 160
 const MAX_ADDS = 8
 const MAX_SIDEQUESTS = 1
 const MAX_PROMPT = 8000
@@ -115,8 +110,6 @@ Rules:
 - owner: "me" for the person, "Claude" for the assistant, or another person's name. Only when the exchange makes it clear; otherwise omit it.
 - due: a calendar date YYYY-MM-DD, only when a date or deadline is mentioned. Turn relative dates ("Friday", "next week", "end of month") into dates using today's date.
 - reason: a decision's reason in a few words, only when one is given.
-- from: for each new item, "person" when it came from the person's message, "claude" when it came from Claude's reply.
-- quote: for each new item, the sentence it came from, copied word for word from that message, under 160 characters.
 - updates: for an open action item already in the tracker that has no owner or no due date, when the exchange now makes one clear.
 - done: ids of open action items or sidequests the exchange shows are finished: sent, written, delivered, completed. Not started, promised, or partly done. Add how: who finished it, as a short phrase under 60 characters that reads well after "done Oct 31, ", addressing the person as "you" (for example "you finished it", "Claude sent it", "Dana took care of it"). Omit how when the exchange doesn't say.
 - resolved: ids of open questions the exchange answers, each with the answer as a short phrase under 60 characters that reads well after "done Oct 31, " (for example "Dana owns it").
@@ -126,7 +119,7 @@ Rules:
 - goal: only when the tracker has no goal, one sentence under 120 characters on what the person wants to achieve, once the exchange makes it clear.
 
 Reply with JSON only, no other text, in this shape:
-{"actions":[{"text":"...","owner":"...","due":"YYYY-MM-DD","from":"person","quote":"..."}],"questions":[{"text":"...","from":"claude","quote":"..."}],"decisions":[{"text":"...","reason":"...","from":"person","quote":"..."}],"sidequests":[{"text":"...","why":"...","from":"claude","quote":"..."}],"updates":[{"id":"...","owner":"...","due":"YYYY-MM-DD"}],"done":[{"id":"...","how":"..."}],"resolved":[{"id":"...","answer":"..."}],"title":"...","goal":"..."}`
+{"actions":[{"text":"...","owner":"...","due":"YYYY-MM-DD"}],"questions":[{"text":"..."}],"decisions":[{"text":"...","reason":"..."}],"sidequests":[{"text":"...","why":"..."}],"updates":[{"id":"...","owner":"...","due":"YYYY-MM-DD"}],"done":[{"id":"...","how":"..."}],"resolved":[{"id":"...","answer":"..."}],"title":"...","goal":"..."}`
 
 function state(item: ActionItem | Question): string {
   return [item.status, item.locked === true ? 'locked' : undefined, item.dismissed === true ? 'dismissed' : undefined]
@@ -185,14 +178,6 @@ function day(value: unknown): string | undefined {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
 }
 
-function from(value: unknown): From | undefined {
-  return value === 'person' || value === 'claude' ? value : undefined
-}
-
-function origin(item: Record<string, unknown>): Origin {
-  return { from: from(item.from), quote: text(item.quote, MAX_QUOTE) }
-}
-
 function records(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value)
     ? value.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
@@ -220,19 +205,19 @@ export function parseChanges(reply: string): Changes | undefined {
 
   for (const item of records(body.actions)) {
     const t = text(item.text)
-    if (t !== undefined) changes.actions.push({ text: t, owner: text(item.owner), due: day(item.due), ...origin(item) })
+    if (t !== undefined) changes.actions.push({ text: t, owner: text(item.owner), due: day(item.due) })
   }
   for (const item of records(body.questions)) {
     const t = text(item.text)
-    if (t !== undefined) changes.questions.push({ text: t, ...origin(item) })
+    if (t !== undefined) changes.questions.push({ text: t })
   }
   for (const item of records(body.sidequests)) {
     const t = text(item.text)
-    if (t !== undefined) changes.sidequests.push({ text: t, why: text(item.why, MAX_NOTE), ...origin(item) })
+    if (t !== undefined) changes.sidequests.push({ text: t, why: text(item.why, MAX_NOTE) })
   }
   for (const item of records(body.decisions)) {
     const t = text(item.text)
-    if (t !== undefined) changes.decisions.push({ text: t, reason: text(item.reason), ...origin(item) })
+    if (t !== undefined) changes.decisions.push({ text: t, reason: text(item.reason) })
   }
   for (const item of records(body.updates)) {
     if (typeof item.id === 'string') changes.updates.push({ id: item.id, owner: text(item.owner), due: day(item.due) })
@@ -266,19 +251,11 @@ export function nextId(prefix: string, items: readonly { id: string }[]): () => 
 }
 
 // Merges the updater's changes into the tracker as it stands now: new items
-// that don't repeat an existing one (a dismissed one included), each with the
-// row it came from; ticks on open items (one the person unticked too, when
+// that don't repeat an existing one (a dismissed one included); ticks on open
+// items (one the person unticked too, when
 // the conversation now says it's done); and owners or due dates only where an
 // open, unlocked action item has none. A dismissed item is left alone.
-export function applyChanges(t: Tracker, changes: Changes, today: string, rows: Rows = {}): Tracker {
-  const sourceOf = (said?: From) => (said === 'claude' ? rows.answer : rows.prompt) ?? rows.prompt ?? rows.answer
-  // Where an item came from: its row, and the line it came from.
-  const stamp = (item: { source?: string; quote?: Quote }, add: Origin) => {
-    const source = sourceOf(add.from)
-    if (source !== undefined) item.source = source
-    if (add.quote !== undefined) item.quote = { by: add.from ?? 'person', text: add.quote }
-  }
-
+export function applyChanges(t: Tracker, changes: Changes, today: string): Tracker {
   const actions = t.actions.map(item => {
     if (item.status !== 'open' || item.dismissed === true) return item
     const done = changes.done.find(entry => entry.id === item.id)
@@ -313,7 +290,6 @@ export function applyChanges(t: Tracker, changes: Changes, today: string, rows: 
   for (const add of changes.actions.slice(0, MAX_ADDS)) {
     if (actions.some(item => sameText(item.text, add.text))) continue
     const item: ActionItem = { id: actionId(), text: add.text, status: 'open' }
-    stamp(item, add)
     if (add.owner !== undefined) item.owner = add.owner
     if (add.due !== undefined) item.due = add.due
     actions.push(item)
@@ -323,7 +299,6 @@ export function applyChanges(t: Tracker, changes: Changes, today: string, rows: 
   for (const add of changes.questions.slice(0, MAX_ADDS)) {
     if (questions.some(item => sameText(item.text, add.text))) continue
     const item: Question = { id: questionId(), text: add.text, status: 'open' }
-    stamp(item, add)
     questions.push(item)
   }
 
@@ -331,7 +306,6 @@ export function applyChanges(t: Tracker, changes: Changes, today: string, rows: 
   for (const add of changes.decisions.slice(0, MAX_ADDS)) {
     if (decisions.some(item => sameText(item.text, add.text))) continue
     const item: Decision = { id: decisionId(), text: add.text, decidedOn: today }
-    stamp(item, add)
     if (add.reason !== undefined) item.reason = add.reason
     decisions.push(item)
   }
@@ -342,7 +316,6 @@ export function applyChanges(t: Tracker, changes: Changes, today: string, rows: 
   for (const add of changes.sidequests.slice(0, MAX_SIDEQUESTS)) {
     if ([...actions, ...sidequests].some(item => sameText(item.text, add.text))) continue
     const item: Sidequest = { id: sidequestId(), text: add.text, status: 'open' }
-    stamp(item, add)
     if (add.why !== undefined) item.why = add.why
     sidequests.push(item)
   }
