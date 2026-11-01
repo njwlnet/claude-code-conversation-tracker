@@ -79,7 +79,7 @@ Getting the plugin into a cloud session:
   ```
 
 - On a Team or Enterprise plan, an owner can turn it on for everyone through server-managed settings.
-- In a cloud session that's already running (the setup script only runs for new ones), ask Claude to run the two commands above, then send `/reload-plugins`, then `/tracker scan`.
+- The setup script only runs when a new cloud session starts, and `/reload-plugins` doesn't run over a cloud session's remote connection, so a cloud session that's already running can't load the plugin. Start a new one.
 
 A tracker saved in a cloud session lives on that cloud machine, so it can be lost when the machine is reclaimed. To keep the pane while working away from your desk, use [Remote Control](https://code.claude.com/docs/en/remote-control.md): the session runs on your own machine, where the pane draws.
 
