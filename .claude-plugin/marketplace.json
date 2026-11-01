@@ -1,0 +1,12 @@
+{
+  "name": "njwlnet",
+  "owner": { "name": "Nick Lee" },
+  "description": "Claude Code mods by njwlnet",
+  "plugins": [
+    {
+      "name": "conversation-tracker",
+      "source": "./",
+      "description": "A pane beside the chat that tracks each conversation's title, goal, action items, open questions, decisions and sidequests"
+    }
+  ]
+}

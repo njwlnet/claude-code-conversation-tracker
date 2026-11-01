@@ -1,0 +1,6 @@
+{
+  "name": "conversation-tracker",
+  "version": "0.1.0",
+  "description": "A pane beside the chat that tracks action items, open questions and decisions for each conversation",
+  "types": "./types/index.d.ts"
+}
